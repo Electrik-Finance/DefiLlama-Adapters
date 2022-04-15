@@ -1,35 +1,47 @@
 const Caver = require("caver-js");
-const addressBookAbi = require("./abi/addressBook.json");
+const axios = require("axios");
+const retry = require("async-retry");
+const stakingABI = require("./abi/abi.json");
+
 const { toUSDTBalances } = require("../helper/balances");
 
-const coinAddress = "0x0000000000000000000000000000000000000000";
-const addressBook = "0x380814144fA550B83A2Be6367c71e60660494cAa";
 async function klaytn() {
+  let klaytnTVL = 0;
+  const endpoint = "https://api.electrik.finance/api/status/pools";
+  const pools = await retry(
+    async () => await axios.get(endpoint).then((res) => res.data.result.pools)
+  );
+  if (pools) {
+    Object.values(pools).forEach((pool) => {
+      klaytnTVL += Number(pool.tvl || 0);
+    });
+  }
+
+  return toUSDTBalances(klaytnTVL);
+}
+async function fetchStaking() {
   const provider = new Caver.providers.HttpProvider(
     "https://public-node-api.klaytnapi.com/v1/cypress"
   );
   const caver = new Caver(provider);
-  let klaytnTVL = 0;
-
-  const addressBookContract = new caver.klay.Contract(
-    addressBookAbi,
-    addressBook
+  const pool = "0xC2873149235756BF36eCA22AEf051889c95461ED";
+  const tvlContract = new caver.klay.Contract(
+    stakingABI,
+    "0x2fd427E041513580e9E47bd2E99608b365339c3E"
   );
-  const poolLength = await addressBookContract.methods.addressLength().call();
-  for (let i = 0; i < poolLength; i++) {
-    const tvl = await addressBookContract.methods
-      .getTvl(i)
+  let stakingTvl = 0;
+  try {
+    stakingTvl = await tvlContract.methods
+      .tvl(pool)
       .call()
-      .catch((err) => 0);
-    klaytnTVL += Number(tvl);
-  }
+      .then((res) => res / 1e18);
+  } catch (err) {}
 
-  klaytnTVL = klaytnTVL / 1e18;
-  return toUSDTBalances(klaytnTVL);
+  return toUSDTBalances(stakingTvl);
 }
 module.exports = {
   klaytn: {
     tvl: klaytn,
+    staking: fetchStaking,
   },
 };
-klaytn();
